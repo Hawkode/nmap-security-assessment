@@ -1,118 +1,66 @@
-# nmap-security-assessment
-Security assessment using Nmap for vulnerability detection and compliance.
-# Security Assessment with Nmap
+# Network Recon Lab: Nmap and a minimal Python scanner
 
-## 📌 Project Overview
-Conducted a security assessment using **Nmap** to identify vulnerabilities in **FTP, SSH, Telnet, and SMB services** across target systems. The assessment aimed to enhance security by ensuring compliance with **ISO 27001** standards and conducting regular risk assessments. Mitigation recommendations were provided to strengthen system security.
+Service discovery and vulnerability checks with Nmap against lab hosts, focusing on FTP, SSH, Telnet and SMB, plus a small Python TCP connect scanner that shows what a port scan does at the socket level.
 
-## 🚀 Objectives
-- Scan for open and vulnerable ports on networked systems.
-- Identify security risks in FTP, SSH, Telnet, and SMB services.
-- Ensure compliance with **ISO 27001** security standards.
-- Provide actionable mitigation recommendations to enhance security posture.
+> **Status:** lab notes from January 2025, cleaned up and merged in November 2026. The Python scanner used to be a separate repo (`custom-port-scanner`) that described code it didn't contain. The code is now here, in [`scanner/`](scanner/tcp_connect_scan.py). Scan only hosts you own or have written permission to test.
 
----
-
-## 🛠️ Setup & Configuration
-
-### 1️⃣ Install Nmap
-Ensure Nmap is installed on your system:
-```sh
-sudo apt install nmap  # Ubuntu/Debian
-sudo yum install nmap  # CentOS/RHEL
-brew install nmap      # macOS
-```
-Verify installation:
-```sh
-nmap --version
+## Nmap
+### Scope
+Set targets once and reuse them:
+```bash
+export TARGETS="192.168.56.0/24"     # lab host-only network
 ```
 
-### 2️⃣ Define Target Scope
-Identify target systems for scanning:
-```sh
-export TARGETS="192.168.1.1 192.168.1.2 192.168.1.3"
+### 1. Service discovery
+```bash
+nmap -sV -p 21,22,23,445 -T4 $TARGETS
 ```
-Or scan an entire subnet:
-```sh
-export TARGETS="192.168.1.0/24"
-```
+- `-sV` probes open ports for the service name and version.
+- `-T4` uses faster timing. Fine on a lab network; on a production network use `-T3` or lower so you don't trip IDS rules or overload fragile devices.
 
----
-
-## 🔍 Security Assessment with Nmap
-
-### 🔹 1. Scan for Open Ports
-```sh
-nmap -p 21,22,23,445 -sV -T4 $TARGETS
-```
-- **`-p 21,22,23,445`** → Scan FTP (21), SSH (22), Telnet (23), SMB (445)
-- **`-sV`** → Service version detection
-- **`-T4`** → Aggressive timing for faster scanning
-
-### 🔹 2. Detect Vulnerabilities
-Use **Nmap Scripts (NSE)** for vulnerability scanning:
-```sh
+### 2. Vulnerability scripts
+```bash
 nmap --script vuln -p 21,22,23,445 $TARGETS
-```
-✅ Identifies known vulnerabilities in services.
-
-Example: Scan for **SMB vulnerabilities**:
-```sh
 nmap --script smb-vuln* -p 445 $TARGETS
 ```
+NSE `vuln` scripts flag known issues from version strings and safe checks. Treat their output as leads to confirm, not as proof.
 
-### 🔹 3. Comprehensive Security Scan
-```sh
-nmap -A -T4 $TARGETS
+### 3. Full profile of one host
+```bash
+nmap -A -T4 192.168.56.101
 ```
-- **`-A`** → Enables OS detection, version detection, script scanning, and traceroute.
-- **`-T4`** → Faster execution.
+`-A` adds OS detection, default scripts and traceroute. It's the loudest option here, so use it on single hosts, not whole ranges.
 
----
+## Lab findings
+These came from intentionally vulnerable lab VMs, not production systems. The severity column is my rating.
 
-## 📊 Risk Assessment & Compliance
-Ensured compliance with **ISO 27001** security controls:
-- **A.12.6.1**: Security Vulnerabilities Management.
-- **A.13.1.1**: Network Security Controls.
-- **A.18.2.3**: Technical Compliance Review.
+| Service | Severity | Finding | Fix |
+|---|---|---|---|
+| FTP (21) | High | Anonymous login allowed, outdated server version | Disable anonymous access; replace FTP with SFTP |
+| SSH (22) | Medium | Weak ciphers and key exchange offered | Update OpenSSH; restrict `Ciphers`, `KexAlgorithms` and `MACs` |
+| Telnet (23) | High | Clear-text logins | Disable Telnet; use SSH |
+| SMB (445) | Medium | SMBv1 enabled | Disable SMBv1. On Windows, SMBv1 without the MS17-010 patch is the EternalBlue path |
 
-### 🔹 Key Findings
-| Service | Risk Level | Vulnerabilities Detected |
-|---------|-----------|-------------------------|
-| FTP (21) | 🔴 High | Anonymous login enabled, outdated version |
-| SSH (22) | 🟠 Medium | Weak ciphers detected |
-| Telnet (23) | 🔴 High | Clear-text authentication |
-| SMB (445) | 🟠 Medium | SMBv1 enabled (vulnerable to EternalBlue) |
+An open port is not a vulnerability by itself. The risk comes from what listens on it, its version and its configuration, which is what the `-sV` and NSE steps establish.
 
-### 🔹 Mitigation Recommendations
-✅ **Disable FTP anonymous access** and enforce TLS encryption.
-✅ **Upgrade SSH** and configure stronger encryption algorithms.
-✅ **Disable Telnet** and replace with SSH for secure remote access.
-✅ **Disable SMBv1** and enforce SMBv2 or SMBv3.
+## Python TCP connect scanner
+[`scanner/tcp_connect_scan.py`](scanner/tcp_connect_scan.py): standard library only, about 80 lines.
+```bash
+python3 scanner/tcp_connect_scan.py 192.168.56.101 -p 1-1024
+python3 scanner/tcp_connect_scan.py 192.168.56.101 -p 21,22,23,445 --timeout 0.5
+```
+```
+Scanning 192.168.56.101 (192.168.56.101), 1024 TCP ports
+21/tcp open  ftp
+22/tcp open  ssh
+...
+```
+How it works:
+- Each port gets a full TCP handshake (`connect_ex`), the same as Nmap's `-sT`. A completed handshake means open; a refusal or timeout means closed or filtered.
+- A thread pool (100 workers by default) runs the connections in parallel.
+- It is deliberately less capable than Nmap: no SYN scan (that needs raw sockets and root), no version detection, no UDP. It shows the mechanism, it doesn't replace the tool.
 
----
-
-## 🔧 Future Enhancements
-✅ Automate scans using a **cron job** for continuous monitoring.
-✅ Integrate with **Splunk** for real-time threat detection.
-✅ Deploy **OSSEC** for host-based intrusion detection.
-
----
-
-## 📌 Technologies Used
-- **Nmap (Network Mapper)**
-- **NSE (Nmap Scripting Engine)**
-- **Linux & Windows Security Tools**
-- **ISO 27001 Compliance Framework**
-
----
-
-## 📢 Contribution & Feedback
-Feel free to **fork** this repository, contribute by submitting **pull requests**, or suggest improvements via **issues**! 🚀
-
----
-
-### 🔗 References
-- [Nmap Documentation](https://nmap.org/book/man.html)
-- [ISO 27001 Security Controls](https://www.iso.org/isoiec-27001-information-security.html)
-- [SMB Vulnerability Scanner](https://nmap.org/nsedoc/scripts/smb-vuln-ms17-010.html)
+## How scans look from the other side
+- **Connect scans are the easiest to see.** Every open port is a completed connection the target can log, unlike Nmap's default SYN scan, which never finishes the handshake.
+- **What catches them:** IDS rules for one source touching many ports in a short window (see the [Snort lab](https://github.com/Hawkode/Snort-Lab)), firewall drop logs (Windows `pfirewall.log`, Security EID 5157), and connection logs in the SIEM.
+- **Reducing exposure:** close what isn't needed, restrict management ports (SSH, SMB, RDP) to admin networks, and scan your own ranges regularly so you find changes before someone else does.
